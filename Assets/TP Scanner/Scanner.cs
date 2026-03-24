@@ -3,7 +3,9 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using UnityEngine;
+
 
 public class Scanner : MonoBehaviour {
 
@@ -78,6 +80,38 @@ public class Scanner : MonoBehaviour {
         //Figure out which modules are not installed
         List<RepoEntry> missingModules = mods.Except(installedModules).ToList();
         Log($"Modules not isntalled from the repo: {missingModules.Select(m => m.Name).Join(", ")}");
+
+        //Get the module game's components to check for autosolver
+        foreach (RepoEntry mod in installedModules) 
+        {
+            GameObject moduleGameObject = null; //need to change this line to be the module's game object
+            MonoBehaviour[] moduleComponents = moduleGameObject.GetComponents<MonoBehaviour>();
+
+            if (HasAutoSolver(moduleComponents))
+            {
+                Log($"{mod.Name} has a TP autosolver");
+            }
+            else 
+            {
+                Log($"{mod.Name} does not have a TP autosolver");
+            }
+        }
+    }
+
+    bool HasAutoSolver(MonoBehaviour[] components)
+    {
+        bool hasAutosolver = false;
+        foreach (MonoBehaviour comp in components)
+        {
+            var method = comp.GetType().GetMethod("TwitchHandleForcedSolve", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (method != null)
+            {
+                hasAutosolver = true;
+                break;
+            }
+        }
+
+        return hasAutosolver;
     }
 
     private void Log(string str)
