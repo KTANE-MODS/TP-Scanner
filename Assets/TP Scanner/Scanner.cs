@@ -30,7 +30,6 @@ public class Scanner : MonoBehaviour {
     IEnumerator ScanTP()
     {
         yield return LoadJSON();
-        Debug.Log("3");
         if (successJSON)
         {
             ScanForTP();
@@ -46,9 +45,7 @@ public class Scanner : MonoBehaviour {
         }
         Log("Connecting to the repo...");
         WWW fetch = new WWW(url);
-        Debug.Log("1");
         yield return fetch;
-        Debug.Log("2");
         if (fetch.error == null)
         {
             Log("Connection successful.");
@@ -75,14 +72,12 @@ public class Scanner : MonoBehaviour {
     void ScanForTP()
     {
         //for each module, check if the player has it installed
-        foreach (RepoEntry mod in mods)
-        {
-            string path = modulePath + mod.SteamID;
+        List<RepoEntry> installedModules = mods.Where(mod => Directory.Exists(modulePath + mod.SteamID)).ToList();
+        Log($"Installed modules: {installedModules.Select(m => m.Name).Join(", ")}");
 
-            List<RepoEntry> installedModules = mods.Where(x => Directory.Exists(modulePath + mod.SteamID)).ToList();
-            
-            Log($"Installed modules {installedModules.Select(m => m.Name).Join(", ")}");
-        }
+        //Figure out which modules are not installed
+        List<RepoEntry> missingModules = mods.Except(installedModules).ToList();
+        Log($"Modules not isntalled from the repo: {missingModules.Select(m => m.Name).Join(", ")}");
     }
 
     private void Log(string str)
