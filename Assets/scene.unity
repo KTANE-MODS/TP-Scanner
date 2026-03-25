@@ -288,6 +288,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   modulePath: C:\Program Files (x86)\Steam\steamapps\workshop\content\341800\
   url: https://ktane.timwi.de/json/raw
+  csvPath: ../
 --- !u!4 &583417157
 Transform:
   m_ObjectHideFlags: 0

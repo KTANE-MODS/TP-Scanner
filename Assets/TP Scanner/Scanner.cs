@@ -4,7 +4,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using UnityEngine;
+using static UnityEngine.UI.Navigation;
 
 
 public class Scanner : MonoBehaviour {
@@ -13,8 +15,12 @@ public class Scanner : MonoBehaviour {
 	private string modulePath; //The path where all the modules are installed located
     [SerializeField]
     private string url; //Repo path
+    [SerializeField]
+    private string csvPath; //path to save the csv
 
     List<RepoEntry> mods = new List<RepoEntry>();
+
+
 
     //For each folder, verify the module
     class KtaneData
@@ -26,15 +32,65 @@ public class Scanner : MonoBehaviour {
 
     void Awake()
     {
-        StartCoroutine(ScanTP());
+        StartCoroutine(Scan());
     }
 
-    IEnumerator ScanTP()
+    IEnumerator Scan()
     {
         yield return LoadJSON();
         if (successJSON)
         {
-            ScanForTP();
+            //check if player is missing any modules on their device
+            RepoEntry.ParentPath = modulePath;
+            List<RepoEntry> installedModules = mods.Where(mod => Directory.Exists(mod.DirectoryPath)).ToList();
+            List<RepoEntry> missingModules = mods.Except(installedModules).ToList();
+            Log($"Installed modules: {installedModules.Select(m => m.Name).Join(", ")}");
+            Log($"Modules not installed from the repo: {missingModules.Select(m => m.Name).Join(", ")}");
+
+            //Check with modules have TP Support
+            List<RepoEntry> modsWithTPSupport = CheckForTPSupport(installedModules);
+            List<RepoEntry> modsWithoutTPSupport = installedModules.Except(modsWithTPSupport).ToList();
+            Log($"Modules with TP Support: {modsWithTPSupport.Select(m => m.Name).Join(", ")}");
+            Log($"Modules without TP Support: {modsWithoutTPSupport.Select(m => m.Name).Join(", ")}");
+
+            //Check whichm oudles have autosolvers
+            List<RepoEntry> modsWithAutoSolvers = CheckForAutosolves(modsWithTPSupport);
+            List<RepoEntry> tpSupportedModsWithoutAutoSolvers = modsWithTPSupport.Except(modsWithAutoSolvers).ToList();
+            Log($"Modules with autosolvers: {modsWithAutoSolvers.Select(m => m.Name).Join(", ")}");
+            Log($"Modules without autosolvers: {tpSupportedModsWithoutAutoSolvers.Select(m => m.Name).Join(", ")}");
+
+
+            //write the csv and save it
+            StringBuilder csv = new StringBuilder();
+            csv.AppendLine("Name, Has TP Support, Has Auto Solver");
+
+
+            foreach (RepoEntry mod in modsWithAutoSolvers)
+            {
+                csv.AppendLine($"{EscapeCsv(mod.Name)}, TRUE, TRUE");
+            }
+
+            foreach (RepoEntry mod in tpSupportedModsWithoutAutoSolvers)
+            {
+                csv.AppendLine($"{EscapeCsv(mod.Name)}, TRUE, FALSE");
+            }
+
+            foreach (RepoEntry mod in modsWithoutTPSupport)
+            {
+                csv.AppendLine($"{EscapeCsv(mod.Name)}, FALSE, FALSE");
+            }
+
+            foreach (RepoEntry mod in missingModules)
+            {
+                csv.AppendLine($"{EscapeCsv(mod.Name)}, UNKNOWN, UNKNOWN");
+            }
+
+            if (Application.isEditor) 
+            { 
+                string path = Path.Combine(Application.dataPath, "output.csv");
+                File.WriteAllText(path, csv.ToString());
+            }
+
         }
     }
 
@@ -43,21 +99,22 @@ public class Scanner : MonoBehaviour {
     {
         if(successJSON)
         {
-            Log("Connection already established, skipping loading...");
+            Log("Connection to repo already established, skipping loading...");
+            yield break;
         }
-        Log("Connecting to the repo...");
+        Log($"Connecting to the repo with url \"{url}\"...");
         WWW fetch = new WWW(url);
         yield return fetch;
         if (fetch.error == null)
         {
             Log("Connection successful.");
-            mods = ProcessJson(fetch.text).Where(x => x.SteamID != null && (x.Type == "Regular" || x.Type == "Needy")).ToList();
+            mods = ProcessJson(fetch.text).Where(x => x.SteamID != null && (x.Type == "Regular" || x.Type == "Needy")).OrderBy(m => m.Name).ToList();
             successJSON = true;
         }
         else
         {
             Log("Connection failed.");
-            successJSON = true;
+            successJSON = false;
         }
     }
 
@@ -71,51 +128,62 @@ public class Scanner : MonoBehaviour {
         return RepoEntries;
     }
 
-    void ScanForTP()
+    List<RepoEntry> CheckForTPSupport(List<RepoEntry> mods)
     {
-        //for each module, check if the player has it installed
-        List<RepoEntry> installedModules = mods.Where(mod => Directory.Exists(modulePath + mod.SteamID)).ToList();
-        Log($"Installed modules: {installedModules.Select(m => m.Name).Join(", ")}");
-
-        //Figure out which modules are not installed
-        List<RepoEntry> missingModules = mods.Except(installedModules).ToList();
-        Log($"Modules not isntalled from the repo: {missingModules.Select(m => m.Name).Join(", ")}");
-
-        //Get the module game's components to check for autosolver
-        foreach (RepoEntry mod in installedModules) 
-        {
-            GameObject moduleGameObject = null; //need to change this line to be the module's game object
-            MonoBehaviour[] moduleComponents = moduleGameObject.GetComponents<MonoBehaviour>();
-
-            if (HasAutoSolver(moduleComponents))
-            {
-                Log($"{mod.Name} has a TP autosolver");
-            }
-            else 
-            {
-                Log($"{mod.Name} does not have a TP autosolver");
-            }
-        }
+        return mods.Where(mod => DllHasFunction(mod.GetDLLPaths(), "ProcessTwitchCommand")).ToList();
     }
 
-    bool HasAutoSolver(MonoBehaviour[] components)
+    List<RepoEntry> CheckForAutosolves(List<RepoEntry> mods)
     {
-        bool hasAutosolver = false;
-        foreach (MonoBehaviour comp in components)
+        Log("Checking for autosolves...");
+        return mods.Where(mod => DllHasFunction(mod.GetDLLPaths(), "TwitchHandleForcedSolve")).ToList();
+    }
+
+    bool DllHasFunction(string[] dllFilePaths, string functionName)
+    {
+        foreach (string dll in dllFilePaths)
         {
-            var method = comp.GetType().GetMethod("TwitchHandleForcedSolve", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (method != null)
+            try
             {
-                hasAutosolver = true;
+                var assembly = Assembly.LoadFrom(dll);
+
+                var validTypes = assembly.GetTypes()
+                    .Where(t => typeof(MonoBehaviour).IsAssignableFrom(t));
+
+                return validTypes.Any(t =>
+                    t.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                     .Any(m => m.Name ==  functionName)
+                );
+            }
+            catch
+            {
+                Log($"Failed to load: {dll}", LogType.Warning);
+            }
+        }
+
+        return false;
+    }
+    void Log(string str, LogType logType = LogType.Log)
+    {
+        switch (logType)
+        {
+            case LogType.Warning:
+                Debug.LogWarning($"[TP Scanner] {str}");
                 break;
-            }
+            default:
+                Debug.Log($"[TP Scanner] {str}");
+            break;
         }
-
-        return hasAutosolver;
     }
 
-    private void Log(string str)
+    string EscapeCsv(string field)
     {
-        Debug.Log($"[TP Scanner] {str}");
+        if (field.Contains(",") || field.Contains("\n"))
+        {
+            field = field.Replace("\"", "\"\"");
+            return $"\"{field}\"";
+        }
+
+        return field;
     }
 }
